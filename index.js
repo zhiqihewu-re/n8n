@@ -1,29 +1,50 @@
 const https = require('https');
+const http = require('http');
 
-// 配置需要保活的 2 个 Hugging Face Space 地址（已添加你要的第二个）
+// 配置常量
 const URL_LIST = [
   'https://apoastron-n8n.hf.space/healthz',
   'https://apoastron-ffmpeg.hf.space/healthz'
-]; 
+];
+const INTERVAL_MS = 15 * 60 * 1000; // 15分钟
+const REQUEST_TIMEOUT = 30000; // 30秒
+
+// 错误处理
+process.on('uncaughtException', (err) => {
+  console.error(`[${new Date().toISOString()}] Uncaught Exception:`, err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error(`[${new Date().toISOString()}] Unhandled Rejection at:`, promise, 'reason:', reason);
+});
 
 function wakeUp() {
-  // 循环请求数组里的所有地址
   URL_LIST.forEach(url => {
-    https.get(url, (res) => {
-      // 修复原代码内存泄漏问题：res.resume() 必须加
+    const req = https.get(url, (res) => {
       res.resume();
       console.log(`[${new Date().toISOString()}] Ping ${url} | Status: ${res.statusCode}`);
-    }).on('error', (err) => {
+    });
+    
+    req.setTimeout(REQUEST_TIMEOUT, () => {
+      req.destroy();
+      console.error(`[${new Date().toISOString()}] Ping ${url} Timeout`);
+    });
+    
+    req.on('error', (err) => {
       console.error(`[${new Date().toISOString()}] Ping ${url} Error: ${err.message}`);
     });
-  })
+  });
 }
 
-// 每 15 分钟执行一次保活请求
-setInterval(wakeUp, 15 * 60 * 1000);
+// 定时保活
+setInterval(wakeUp, INTERVAL_MS);
+wakeUp(); // 立即执行一次
 
-// 启动项目时立即执行一次，防止初始休眠
-wakeUp();
+// HTTP 服务
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Alive');
+});
 
-// 启动Http服务，防止Zeabur判定应用崩溃，端口自适应
-require('http').createServer((req, res) => res.end('Alive')).listen(process.env.PORT || 3000);
+server.listen(process.env.PORT || 3000, () => {
+  console.log(`[${new Date().toISOString()}] Server running on port ${server.address().port}`)
